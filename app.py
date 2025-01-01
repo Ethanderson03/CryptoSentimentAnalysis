@@ -116,75 +116,35 @@ def load_all_data(force_refresh=False):
     return sp500_data, vix_data, fear_greed_data, crypto_historical_data, data_status
 
 def display_correlations(crypto_data, sp500_data, vix_data, fear_greed_data):
-    """Display correlation analysis in tabs"""
-    # Create tabs for different correlation views
-    corr_tab1, corr_tab2, corr_tab3 = st.tabs([
-        "Coin vs Coin",
-        "Category vs Market",
-        "Category vs Category"
-    ])
+    """Display correlation analysis results"""
+    # Calculate market correlations
+    market_corr = calculate_market_correlations(
+        crypto_data, sp500_data, vix_data, fear_greed_data
+    )
     
-    with corr_tab1:
+    if not market_corr.empty:
+        st.subheader("Market Correlations")
+        st.plotly_chart(create_correlation_heatmap(market_corr), use_container_width=True)
+    else:
+        st.warning("No market correlations available - insufficient data overlap between crypto and traditional markets.")
+    
+    # Calculate crypto correlations
+    crypto_corr = calculate_crypto_correlations(crypto_data)
+    
+    if not crypto_corr.empty:
         st.subheader("Cryptocurrency Correlations")
-        crypto_corr = calculate_crypto_correlations(crypto_data)
-        if crypto_corr is not None:
-            st.plotly_chart(create_correlation_heatmap(crypto_corr), use_container_width=True)
-        else:
-            st.warning("Unable to calculate crypto correlations. Please check the data.")
+        st.plotly_chart(create_correlation_heatmap(crypto_corr), use_container_width=True)
+    else:
+        st.warning("No cryptocurrency correlations available - insufficient data.")
     
-    with corr_tab2:
-        st.subheader("Category vs Market Indicators")
-        market_corr = calculate_market_correlations(
-            crypto_data,
-            sp500_data,
-            vix_data,
-            fear_greed_data
-        )
-        if market_corr is not None:
-            st.plotly_chart(create_correlation_heatmap(market_corr), use_container_width=True)
-            
-            # Show rolling correlations
-            st.subheader("Rolling Correlations with S&P 500")
-            window = st.slider("Rolling Window (days)", min_value=7, max_value=90, value=30)
-            rolling_corr = calculate_rolling_correlations(
-                crypto_data,
-                sp500_data,
-                window=window
-            )
-            if not rolling_corr.empty:
-                st.plotly_chart(plot_rolling_correlations(rolling_corr), use_container_width=True)
-            else:
-                st.warning("Unable to calculate rolling correlations. Please check the data alignment.")
-        else:
-            st.warning("Unable to calculate market correlations. This might be due to misaligned data or missing values.")
+    # Calculate rolling correlations
+    rolling_corr = calculate_rolling_correlations(crypto_data, sp500_data)
     
-    with corr_tab3:
-        st.subheader("Category vs Category Correlations")
-        # Create DataFrame with all assets
-        df = pd.DataFrame({
-            symbol: data['price']
-            for symbol, data in crypto_data.items()
-        })
-        category_corr = calculate_category_correlations(df)
-        if category_corr is not None:
-            st.plotly_chart(create_correlation_heatmap(category_corr), use_container_width=True)
-            
-            # Show category statistics
-            st.subheader("Category Statistics")
-            stats = []
-            for category in CRYPTO_CATEGORIES:
-                coins = CRYPTO_CATEGORIES[category]
-                available = [c for c in coins if c in crypto_data]
-                stats.append({
-                    'Category': category,
-                    'Total Coins': len(coins),
-                    'Available Coins': len(available),
-                    'Available %': f"{(len(available)/len(coins))*100:.1f}%",
-                    'Coins': ', '.join(available)
-                })
-            st.dataframe(pd.DataFrame(stats))
-        else:
-            st.warning("Unable to calculate category correlations. Please check the data.")
+    if not rolling_corr.empty:
+        st.subheader("Rolling Correlations with S&P 500")
+        st.plotly_chart(plot_rolling_correlations(rolling_corr), use_container_width=True)
+    else:
+        st.warning("No rolling correlations available - insufficient data overlap between crypto and S&P 500.")
 
 def main():
     # Configure page

@@ -5,7 +5,7 @@ import os
 
 # Data fetching settings
 DAYS_OF_HISTORY = 365  # Number of days of historical data to fetch
-TOP_N_CRYPTO = 50     # Number of top cryptocurrencies to analyze
+TOP_N_CRYPTO = 100     # Number of top cryptocurrencies to analyze
 
 # API Configuration
 CMC_API_KEY = os.getenv('CMC_API_KEY')  # Get CoinMarketCap API key from environment
