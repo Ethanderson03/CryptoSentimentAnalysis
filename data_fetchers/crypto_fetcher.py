@@ -173,6 +173,7 @@ def get_all_historical_data():
         return {}
     
     symbols = top_cryptos.index.tolist()
+    logging.info(f"Available coins: {', '.join(sorted(symbols))}")
     logging.info(f"Processing {len(symbols)} cryptocurrencies")
     
     # Initialize results dictionary

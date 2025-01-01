@@ -1,213 +1,239 @@
+"""
+Functions for analyzing correlations between different market indicators
+"""
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import numpy as np
+import plotly.express as px
+from config.crypto_categories import CRYPTO_CATEGORIES
 import logging
 
+def get_coin_category(symbol):
+    """Return the category of a given coin symbol"""
+    for category, coins in CRYPTO_CATEGORIES.items():
+        if symbol in coins:
+            return category
+    return 'Other'
+
+def calculate_returns(df):
+    """Calculate percentage returns from price data"""
+    return df.pct_change().fillna(0)
+
+def calculate_category_correlations(df, window_size=30):
+    """Calculate correlations between different categories of cryptocurrencies"""
+    # Create category dataframes
+    category_dfs = {}
+    for category in CRYPTO_CATEGORIES.keys():
+        coins = CRYPTO_CATEGORIES[category]
+        # Filter coins that exist in our dataframe
+        available_coins = [coin for coin in coins if coin in df.columns]
+        if available_coins:
+            # Calculate the average return for the category
+            category_returns = calculate_returns(df[available_coins])
+            category_dfs[category] = category_returns.mean(axis=1)
+    
+    # Combine all category series into a single dataframe
+    category_df = pd.DataFrame(category_dfs)
+    
+    # Calculate correlations
+    correlations = category_df.corr()
+    return correlations
+
 def calculate_crypto_correlations(crypto_data):
-    """Calculate correlations between different cryptocurrencies.
+    """Calculate correlations between cryptocurrencies and categories"""
+    if not crypto_data:
+        return None
     
-    Args:
-        crypto_data: Dict mapping coin symbols to DataFrames with historical price and market cap
-    Returns:
-        DataFrame with correlation matrix
-    """
-    # Create a DataFrame with all crypto prices
-    prices_df = pd.DataFrame()
-    for symbol, data in crypto_data.items():
-        prices_df[symbol] = data['price']
+    # Convert individual coins to dataframe
+    df = pd.DataFrame({symbol: data['price'] for symbol, data in crypto_data.items()})
     
-    # Calculate correlation matrix
-    return prices_df.corr()
+    # Calculate returns for individual coins
+    returns_df = calculate_returns(df)
+    
+    # Add category indices
+    for category in CRYPTO_CATEGORIES.keys():
+        coins = CRYPTO_CATEGORIES[category]
+        available_coins = [coin for coin in coins if coin in df.columns]
+        if available_coins:
+            # Calculate the average return for the category
+            category_returns = calculate_returns(df[available_coins])
+            returns_df[f"{category}_Index"] = category_returns.mean(axis=1)
+    
+    # Calculate correlations
+    correlations = returns_df.corr()
+    
+    # Add category information to individual coins
+    new_index = []
+    new_columns = []
+    for idx in correlations.index:
+        if idx.endswith('_Index'):
+            new_index.append(idx)
+            new_columns.append(idx)
+        else:
+            new_index.append(f"{idx} ({get_coin_category(idx)})")
+            new_columns.append(f"{idx} ({get_coin_category(idx)})")
+    
+    correlations.index = new_index
+    correlations.columns = new_columns
+    
+    return correlations
 
 def create_correlation_heatmap(correlation_matrix):
-    """Create a heatmap visualization of correlations.
-    
-    Args:
-        correlation_matrix: DataFrame with correlation values
-    Returns:
-        Plotly figure object
-    """
-    fig = go.Figure(data=go.Heatmap(
-        z=correlation_matrix,
-        x=correlation_matrix.columns,
-        y=correlation_matrix.columns,
-        colorscale='RdBu',
+    """Create a heatmap visualization of correlations"""
+    if correlation_matrix is None:
+        return None
+        
+    fig = px.imshow(
+        correlation_matrix,
+        color_continuous_scale='RdBu',
+        aspect='auto',
+        title='Correlation Heatmap',
         zmin=-1,
-        zmax=1,
-        text=np.round(correlation_matrix, 2),  # Show correlation values
-        texttemplate='%{text}',
-        textfont={"size": 10},
-        hoverongaps=False,
-    ))
-    
-    fig.update_layout(
-        title='Market Correlations',
-        height=800,  # Increased height for better readability
-        width=1000,  # Increased width for better readability
-        xaxis={'side': 'bottom'},  # Show x-axis labels at bottom
-        yaxis={'autorange': 'reversed'},  # Reverse y-axis to match traditional correlation matrix display
+        zmax=1
     )
+    
+    # Update layout for better readability
+    fig.update_layout(
+        height=1000,  # Increased height for more coins
+        width=1000,   # Increased width for more coins
+        title_x=0.5,
+        title_y=0.95
+    )
+    
+    # Rotate x-axis labels for better readability
+    fig.update_xaxes(tickangle=45)
     
     return fig
 
 def calculate_market_correlations(crypto_data, sp500_data, vix_data, fear_greed_data):
-    """Calculate correlations between crypto and traditional market indicators.
+    """Calculate correlations between crypto and market indicators"""
+    if not crypto_data or sp500_data is None:
+        return None
     
-    Args:
-        crypto_data: Dict mapping coin symbols to DataFrames with historical price and market cap
-        sp500_data: Series with S&P 500 historical data
-        vix_data: Series with VIX historical data
-        fear_greed_data: Series with Fear & Greed Index data
-    Returns:
-        DataFrame with correlation matrix
-    """
-    # Print input data info
-    print("\nInput data shapes:")
-    print(f"S&P 500: {len(sp500_data) if sp500_data is not None else 'None'}")
-    print(f"VIX: {len(vix_data) if vix_data is not None else 'None'}")
-    print(f"Fear & Greed: {len(fear_greed_data) if fear_greed_data is not None else 'None'}")
-    
-    # Create a DataFrame with crypto prices first
-    market_df = pd.DataFrame()
-    
-    # Filter out coins with too much missing data
-    valid_coins = {}
-    for symbol, data in crypto_data.items():
-        daily_price = data['price'].resample('D').last()
-        if len(daily_price.dropna()) > 200:  # Only keep coins with sufficient data
-            valid_coins[symbol] = daily_price
-    
-    logging.info(f"Found {len(valid_coins)} coins with sufficient data")
-    
-    # Add valid coins to the dataframe
-    for symbol, price_series in valid_coins.items():
-        market_df[symbol] = price_series
+    # Prepare market data
+    market_data = pd.DataFrame()
     
     # Add market indicators
     if sp500_data is not None:
-        market_df['SP500'] = sp500_data.resample('D').last()
+        market_data['SP500'] = sp500_data
     if vix_data is not None:
-        market_df['VIX'] = vix_data.resample('D').last()
+        market_data['VIX'] = vix_data
     if fear_greed_data is not None:
-        if not isinstance(fear_greed_data.index, pd.DatetimeIndex):
-            fear_greed_data.index = pd.to_datetime(fear_greed_data.index)
-        market_df['Fear_Greed'] = fear_greed_data
+        market_data['Fear_Greed'] = fear_greed_data
     
-    # Ensure all indices are timezone-naive
-    market_df.index = pd.to_datetime(market_df.index)
-    if market_df.index.tz is not None:
-        market_df.index = market_df.index.tz_convert('UTC').tz_localize(None)
+    # Add individual crypto data
+    for symbol, data in crypto_data.items():
+        market_data[f"{symbol}"] = data['price']
     
-    # Align dates to only include days where we have all data
-    start_date = max(market_df[col].first_valid_index() for col in market_df.columns)
-    end_date = min(market_df[col].last_valid_index() for col in market_df.columns)
-    market_df = market_df.loc[start_date:end_date]
+    # Add category indices
+    for category in CRYPTO_CATEGORIES.keys():
+        coins = CRYPTO_CATEGORIES[category]
+        available_coins = [coin for coin in coins if coin in crypto_data]
+        if available_coins:
+            category_prices = [crypto_data[coin]['price'] for coin in available_coins]
+            market_data[f'{category}_Index'] = pd.concat(category_prices, axis=1).mean(axis=1)
     
-    # Print debug information
-    print("\nData shape before alignment:", market_df.shape)
-    print("Column names:", market_df.columns.tolist())
-    print("Date range:", market_df.index.min(), "to", market_df.index.max())
-    print("\nSample of data:")
-    print(market_df.head())
-    print("\nNaN counts before dropping:")
-    print(market_df.isna().sum())
-    
-    # Drop any rows with NaN values
-    market_df = market_df.dropna()
-    print("\nData shape after dropping NaN:", market_df.shape)
+    # Calculate returns for price data (except Fear & Greed which is already a sentiment score)
+    returns_cols = [col for col in market_data.columns if col != 'Fear_Greed']
+    market_returns = market_data.copy()
+    market_returns[returns_cols] = calculate_returns(market_data[returns_cols])
     
     # Calculate correlations
-    return market_df.corr()
+    correlations = market_returns.corr()
+    
+    # Log statistics about coins by category
+    for category in CRYPTO_CATEGORIES:
+        coins = CRYPTO_CATEGORIES[category]
+        available = [c for c in coins if c in crypto_data]
+        logging.info(f"{category}: {len(available)}/{len(coins)} coins available")
+    
+    return correlations
 
 def calculate_rolling_correlations(crypto_data, sp500_data, window=30):
-    """Calculate rolling correlations between crypto and S&P 500.
+    """Calculate rolling correlations between crypto and S&P 500"""
+    if not crypto_data or sp500_data is None:
+        return pd.DataFrame()
     
-    Args:
-        crypto_data: Dict mapping coin symbols to DataFrames with historical price and market cap
-        sp500_data: Series with S&P 500 historical data
-        window: Rolling window size in days
-    Returns:
-        DataFrame with rolling correlations
-    """
-    # Create a DataFrame with crypto prices first
-    rolling_corr_df = pd.DataFrame()
+    # Create a dataframe with crypto and S&P 500 data
+    df = pd.DataFrame()
     
-    # Filter out coins with too much missing data
-    valid_coins = {}
+    # Add individual coins
     for symbol, data in crypto_data.items():
-        daily_price = data['price'].resample('D').last()
-        if len(daily_price.dropna()) > 200:  # Only keep coins with sufficient data
-            valid_coins[symbol] = daily_price
+        df[symbol] = data['price']
     
-    logging.info(f"Found {len(valid_coins)} coins with sufficient data for rolling correlations")
+    # Add category indices
+    for category in CRYPTO_CATEGORIES.keys():
+        coins = CRYPTO_CATEGORIES[category]
+        available_coins = [coin for coin in coins if coin in crypto_data]
+        if available_coins:
+            category_prices = [crypto_data[coin]['price'] for coin in available_coins]
+            df[f'{category}_Index'] = pd.concat(category_prices, axis=1).mean(axis=1)
     
-    for symbol, crypto_daily in valid_coins.items():
-        # Resample S&P 500 data to daily frequency
-        sp500_daily = sp500_data.resample('D').last()
-        
-        # Align dates between crypto and S&P 500
-        aligned_data = pd.DataFrame({
-            'crypto': crypto_daily,
-            'sp500': sp500_daily
-        })
-        
-        # Drop any NaN values
-        aligned_data = aligned_data.dropna()
-        
-        if not aligned_data.empty:
-            # Calculate rolling correlation with smaller min_periods
-            rolling_corr = aligned_data['crypto'].rolling(
-                window=window,
-                min_periods=max(5, window//4)  # Use at least 5 periods or 1/4 of window
-            ).corr(aligned_data['sp500'])
-            
-            rolling_corr_df[symbol] = rolling_corr
+    # Add S&P 500
+    df['SP500'] = sp500_data
     
-    # Print debug information
-    print(f"\nRolling correlation shape: {rolling_corr_df.shape}")
-    if not rolling_corr_df.empty:
-        print(f"Date range: {rolling_corr_df.index.min()} to {rolling_corr_df.index.max()}")
-        print(f"Sample of rolling correlations:")
-        print(rolling_corr_df.head())
-    print(f"NaN counts:")
-    print(rolling_corr_df.isna().sum())
+    # Calculate returns
+    returns_df = calculate_returns(df)
     
-    return rolling_corr_df.dropna()
+    # Calculate rolling correlations with S&P 500
+    rolling_corr = returns_df.rolling(window=window, min_periods=window//2).corr()
+    
+    # Extract only the correlations with S&P 500
+    sp500_corr = rolling_corr.xs('SP500', level=1)
+    sp500_corr = sp500_corr.drop('SP500', axis=1)
+    
+    logging.info(f"Found {len(df.columns)-1} assets with sufficient data for rolling correlations")
+    
+    return sp500_corr
 
-def plot_rolling_correlations(rolling_corr_df):
-    """Create a line plot of rolling correlations.
+def plot_rolling_correlations(rolling_corr):
+    """Create a line plot of rolling correlations"""
+    if rolling_corr.empty:
+        return None
     
-    Args:
-        rolling_corr_df: DataFrame with rolling correlations
-    Returns:
-        Plotly figure object
-    """
-    fig = go.Figure()
+    # Separate individual coins and indices
+    indices = [col for col in rolling_corr.columns if col.endswith('_Index')]
+    coins = [col for col in rolling_corr.columns if not col.endswith('_Index')]
     
-    for column in rolling_corr_df.columns:
-        fig.add_trace(
-            go.Scatter(
-                x=rolling_corr_df.index,
-                y=rolling_corr_df[column],
-                name=f'{column} vs S&P 500',
-                mode='lines'
-            )
-        )
-    
-    fig.update_layout(
-        title=f'{rolling_corr_df.shape[0]}-Day Rolling Correlations with S&P 500',
-        yaxis_title='Correlation Coefficient',
-        yaxis=dict(range=[-1, 1]),  # Fix y-axis range to standard correlation range
-        height=600,
-        width=1000,
-        showlegend=True,
-        hovermode='x unified'  # Show all values for a given x-coordinate
+    # Create figure with two traces
+    fig = px.line(
+        rolling_corr,
+        title='30-Day Rolling Correlation with S&P 500'
     )
     
-    # Add horizontal reference lines
-    fig.add_hline(y=0, line=dict(color="gray", width=1, dash="dash"))
-    fig.add_hline(y=0.5, line=dict(color="gray", width=1, dash="dot"))
-    fig.add_hline(y=-0.5, line=dict(color="gray", width=1, dash="dot"))
+    # Update colors to distinguish between coins and indices
+    for trace in fig.data:
+        if trace.name in indices:
+            trace.line.width = 3  # Make index lines thicker
+            trace.line.dash = 'solid'
+        else:
+            trace.line.width = 1  # Make coin lines thinner
+            trace.line.dash = 'dot'
+    
+    # Update layout
+    fig.update_layout(
+        xaxis_title='Date',
+        yaxis_title='Correlation Coefficient',
+        height=800,  # Increased height for more lines
+        showlegend=True,
+        title_x=0.5,
+        title_y=0.95,
+        legend=dict(
+            yanchor="top",
+            y=-0.2,
+            xanchor="center",
+            x=0.5,
+            orientation="h"
+        ),
+        yaxis=dict(
+            range=[-1, 1],  # Fix y-axis range to correlation bounds
+            gridcolor='lightgray',
+            zerolinecolor='gray',
+            zerolinewidth=2
+        )
+    )
+    
+    # Add reference lines
+    fig.add_hline(y=0.5, line_dash="dot", line_color="gray", opacity=0.5)
+    fig.add_hline(y=-0.5, line_dash="dot", line_color="gray", opacity=0.5)
     
     return fig 

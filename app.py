@@ -1,3 +1,6 @@
+"""
+Main Streamlit application file
+"""
 import streamlit as st
 import logging
 from datetime import datetime, timedelta
@@ -11,8 +14,11 @@ from analysis.correlation_analyzer import (
     create_correlation_heatmap,
     calculate_market_correlations,
     calculate_rolling_correlations,
-    plot_rolling_correlations
+    plot_rolling_correlations,
+    calculate_category_correlations,
+    get_coin_category
 )
+from config.crypto_categories import CRYPTO_CATEGORIES
 import pandas as pd
 import plotly.express as px
 
@@ -109,6 +115,77 @@ def load_all_data(force_refresh=False):
     
     return sp500_data, vix_data, fear_greed_data, crypto_historical_data, data_status
 
+def display_correlations(crypto_data, sp500_data, vix_data, fear_greed_data):
+    """Display correlation analysis in tabs"""
+    # Create tabs for different correlation views
+    corr_tab1, corr_tab2, corr_tab3 = st.tabs([
+        "Coin vs Coin",
+        "Category vs Market",
+        "Category vs Category"
+    ])
+    
+    with corr_tab1:
+        st.subheader("Cryptocurrency Correlations")
+        crypto_corr = calculate_crypto_correlations(crypto_data)
+        if crypto_corr is not None:
+            st.plotly_chart(create_correlation_heatmap(crypto_corr), use_container_width=True)
+        else:
+            st.warning("Unable to calculate crypto correlations. Please check the data.")
+    
+    with corr_tab2:
+        st.subheader("Category vs Market Indicators")
+        market_corr = calculate_market_correlations(
+            crypto_data,
+            sp500_data,
+            vix_data,
+            fear_greed_data
+        )
+        if market_corr is not None:
+            st.plotly_chart(create_correlation_heatmap(market_corr), use_container_width=True)
+            
+            # Show rolling correlations
+            st.subheader("Rolling Correlations with S&P 500")
+            window = st.slider("Rolling Window (days)", min_value=7, max_value=90, value=30)
+            rolling_corr = calculate_rolling_correlations(
+                crypto_data,
+                sp500_data,
+                window=window
+            )
+            if not rolling_corr.empty:
+                st.plotly_chart(plot_rolling_correlations(rolling_corr), use_container_width=True)
+            else:
+                st.warning("Unable to calculate rolling correlations. Please check the data alignment.")
+        else:
+            st.warning("Unable to calculate market correlations. This might be due to misaligned data or missing values.")
+    
+    with corr_tab3:
+        st.subheader("Category vs Category Correlations")
+        # Create DataFrame with all assets
+        df = pd.DataFrame({
+            symbol: data['price']
+            for symbol, data in crypto_data.items()
+        })
+        category_corr = calculate_category_correlations(df)
+        if category_corr is not None:
+            st.plotly_chart(create_correlation_heatmap(category_corr), use_container_width=True)
+            
+            # Show category statistics
+            st.subheader("Category Statistics")
+            stats = []
+            for category in CRYPTO_CATEGORIES:
+                coins = CRYPTO_CATEGORIES[category]
+                available = [c for c in coins if c in crypto_data]
+                stats.append({
+                    'Category': category,
+                    'Total Coins': len(coins),
+                    'Available Coins': len(available),
+                    'Available %': f"{(len(available)/len(coins))*100:.1f}%",
+                    'Coins': ', '.join(available)
+                })
+            st.dataframe(pd.DataFrame(stats))
+        else:
+            st.warning("Unable to calculate category correlations. Please check the data.")
+
 def main():
     # Configure page
     st.set_page_config(layout="wide", menu_items={})
@@ -122,7 +199,7 @@ def main():
     """
     st.markdown(hide_menu_style, unsafe_allow_html=True)
     
-    st.title("Market Overview Dashboard")
+    st.title("Crypto Market Analysis Dashboard")
     
     # Initialize session state
     initialize_session_state()
@@ -138,13 +215,30 @@ def main():
         if st.session_state.last_update:
             st.text(f"Last updated: {st.session_state.last_update.strftime('%Y-%m-%d %H:%M:%S')}")
         
-        # Coin selection
-        available_coins = list(crypto_historical_data.keys())
-        selected_coins = st.multiselect(
-            "Select Cryptocurrencies",
-            options=available_coins,
-            default=available_coins[:3] if available_coins else []
+        # Category selection
+        selected_categories = st.multiselect(
+            "Select Categories",
+            options=list(CRYPTO_CATEGORIES.keys()),
+            default=list(CRYPTO_CATEGORIES.keys())[:3]
         )
+        
+        # Get coins from selected categories
+        selected_coins = []
+        for category in selected_categories:
+            selected_coins.extend(CRYPTO_CATEGORIES[category])
+        
+        # Additional coin selection
+        other_coins = [
+            coin for coin in crypto_historical_data.keys()
+            if coin not in selected_coins
+        ]
+        if other_coins:
+            additional_coins = st.multiselect(
+                "Additional Coins",
+                options=other_coins,
+                default=[]
+            )
+            selected_coins.extend(additional_coins)
         
         # Metric selection
         selected_metric = st.radio(
@@ -165,7 +259,7 @@ def main():
         st.info("You can try refreshing the data using the button in the sidebar.")
     
     # Filter crypto data based on selection
-    filtered_crypto_data = crypto_historical_data if not selected_coins else {
+    filtered_crypto_data = {
         symbol: data for symbol, data in crypto_historical_data.items()
         if symbol in selected_coins
     }
@@ -191,47 +285,15 @@ def main():
             st.error("No data available to display. Please try refreshing the data.")
     
     with tab2:
-        st.header("Market Correlations")
-        
         if filtered_crypto_data:
-            # Crypto-to-crypto correlations
-            st.subheader("Cryptocurrency Correlations")
-            crypto_corr = calculate_crypto_correlations(filtered_crypto_data)
-            if crypto_corr is not None:
-                st.plotly_chart(create_correlation_heatmap(crypto_corr), use_container_width=True)
-            else:
-                st.warning("Unable to calculate crypto correlations. Please check the data.")
-            
-            # Crypto vs Market correlations
-            st.subheader("Crypto vs Market Indicators")
-            market_corr = calculate_market_correlations(
+            display_correlations(
                 filtered_crypto_data,
                 sp500_data,
                 vix_data,
                 fear_greed_data
             )
-            if market_corr is not None:
-                st.plotly_chart(create_correlation_heatmap(market_corr), use_container_width=True)
-            else:
-                st.warning("Unable to calculate market correlations. This might be due to misaligned data or missing values.")
-            
-            # Rolling correlations with S&P 500
-            st.subheader("Rolling Correlations with S&P 500")
-            if sp500_data is not None:
-                window = st.slider("Rolling Window (days)", min_value=7, max_value=90, value=30)
-                rolling_corr = calculate_rolling_correlations(
-                    filtered_crypto_data,
-                    sp500_data,
-                    window=window
-                )
-                if not rolling_corr.empty:
-                    st.plotly_chart(plot_rolling_correlations(rolling_corr), use_container_width=True)
-                else:
-                    st.warning("Unable to calculate rolling correlations. Please check the data alignment.")
-            else:
-                st.warning("S&P 500 data is required for rolling correlations.")
         else:
-            st.warning("Please select at least one cryptocurrency to analyze correlations.")
+            st.warning("Please select at least one cryptocurrency or category to analyze correlations.")
 
 if __name__ == "__main__":
     main() 
